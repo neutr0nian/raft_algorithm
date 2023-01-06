@@ -1,0 +1,37 @@
+version: "3.7"
+services:
+  node1:
+    container_name: Node1
+    build: Node/.
+    environment:
+      - NAME=Node1
+      - VERBOSE=True
+      - NODELIST=["Node1", "Node2", "Node3", "Node4", "Node5"]
+  node2:
+    container_name: Node2
+    build: Node/.
+    environment:
+      - NAME=Node2
+      - VERBOSE=True
+      - NODELIST=["Node1", "Node2", "Node3", "Node4", "Node5"]
+  node3:
+    container_name: Node3
+    build: Node/.
+    environment:
+      - NAME=Node3
+      - VERBOSE=True
+      - NODELIST=["Node1", "Node2", "Node3", "Node4", "Node5"]
+  node4:
+    container_name: Node4
+    build: Node/.
+    environment:
+      - NAME=Node4
+      - VERBOSE=True
+      - NODELIST=["Node1", "Node2", "Node3", "Node4", "Node5"]
+  node5:
+    container_name: Node5
+    build: Node/.
+    environment:
+      - NAME=Node5
+      - VERBOSE=True
+      - NODELIST=["Node1", "Node2", "Node3", "Node4", "Node5"]
