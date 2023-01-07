@@ -75,7 +75,7 @@ class Node:
                     elif request == "LOG_ACK" and msg["key"]:
                         self.replicate_count += 1
                     elif request == "LOG_ACK" and not msg["key"]:
-                        pass
+                        self.handleLogConflict(msg)
                     elif request == "COMMIT_LOG":
                         self.commitLog()
                 except BlockingIOError:
@@ -100,32 +100,83 @@ class Node:
             self.curr_leader = msg["sender_name"]
             self.curr_term = int(msg["term"])
             if "prev_index" in msg:
-                is_replicated = self.replicateLog(msg)
-                if is_replicated:
-                    m = self.generateMessage("T")
-                else:
-                    m = self.generateMessage("F")
-                self.socket.sendto(m, (msg["sender_name"], 5555))
+                self.replicateLog(msg)
 
     def replicateLog(self, msg):
-        if msg["prev_index"] and self.curr_index < msg["prev_index"]:
-            prev_index = msg["prev_index"]
-            log = self.logs[self.prev_index]
-            if log["term"] == msg["prev_term"] and log["index"] == prev_index:
-                self.logs.append(msg["new_entry"])
-                self.curr_index += 1
-                self.highest_index = msg["new_entry"]["index"]
-                return True
+        # only replicate if curr index is not up to date
+        if msg["prev_index"]:
+            if self.curr_index < msg["prev_index"]:
+                prev_index = msg["prev_index"]
+                response = None
+                if prev_index < len(self.logs):
+                    log = self.logs[self.prev_index]
+                    if log["term"] == msg["prev_term"] and log["index"] == prev_index:
+                        for entry in msg["new_entries"]:
+                            self.logs.append(entry)
+                            self.curr_index += 1
+                            self.highest_index = entry["index"]
+                        response = self.generateMessage("T")
+                    else:
+                        response = json.loads(self.generateMessage("F").decode())
+                        response["last_entry"] = self.getNextIndex(msg)
+                else:
+                    response = json.loads(self.generateMessage("F").decode())
+                    response["last_entry"] = self.getNextIndex(msg)
+
+                response = json.dumps(response).encode()
+                self.socket.sendto(response, (msg["sender_name"], 5555))
             else:
-                return False
+                if self.logs[msg["prev_index"]]["term"] == msg["prev_term"]:
+                    while self.curr_index != msg["prev_index"]:
+                        self.logs.pop()
+
+                    for entry in msg["new_entries"]:
+                        self.logs.append(entry)
+                        self.curr_index += 1
+
+                    self.socket.sendto(
+                        self.generateMessage("T"), (msg["sender_name"], 5555)
+                    )
+                else:
+                    response = json.loads(self.generateMessage("F").decode())
+                    response = self.getNextIndex(msg)
+                    response = json.dumps(response).encode()
         else:
             if self.curr_index < 0:
                 self.curr_index = 0
-                self.logs.append(msg["new_entry"])
-                self.highest_index = msg["new_entry"]["index"]
+                self.logs.append(msg["new_entries"][0])
+                self.highest_index = msg["new_entries"][0]["index"]
                 print(self.name + " REPLICATED FIRST LOG SUCCESSFULLY")
                 print(self.logs)
-                return True
+                self.socket.sendto(
+                    self.generateMessage("T"), (msg["sender_name"], 5555)
+                )
+
+    def getNextIndex(self, msg):
+        term = (
+            msg["last_entry"]["term"] - 1
+            if "next_index" in msg
+            else self.logs[-1]["term"]
+        )
+        print(term, "LOOKING FOR NEXT INDEX WITH TERM")
+        entry = None
+        for log in self.logs:
+            if log["term"] == term:
+                entry = log
+                print(entry + " SENDING LAST ENTRY")
+        return entry
+
+    def handleLogConflict(self, msg):
+        sender = msg["sender_name"]
+        last_entry = msg["last_entry"]
+
+        msg = self.generateMessage("APPEND_RPC")
+        msg = json.loads(msg.decode())
+        msg["prev_index"] = last_entry["index"] - 1
+        msg["prev_term"] = self.logs[last_entry["index"] - 1]["term"]
+        msg["new_logs"] = self.logs[last_entry["index"] :]
+        msg = json.dumps(msg).encode()
+        self.socket.sendto(msg, (sender, 5555))
 
     # send vote request
     def requestVote(self):
@@ -179,7 +230,7 @@ class Node:
                     msg["prev_term"] = (
                         self.logs[self.prev_index["term"]] if self.prev_index else None
                     )
-                    msg["new_entry"] = self.logs[self.highest_index]
+                    msg["new_entries"] = [self.logs[self.highest_index]]
                     msg = json.dumps(msg).encode()
                 else:
                     self.prev_index = self.highest_index
